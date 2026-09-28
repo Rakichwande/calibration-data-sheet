@@ -1,46 +1,65 @@
-const nodemailer = require('nodemailer');
+// Sends the calibration sheet PDF through Brevo's HTTPS API (not SMTP).
+// Railway blocks outbound SMTP ports on Free/Trial/Hobby plans, but HTTPS works everywhere.
+//
+// Env vars:
+//   BREVO_API_KEY  - from Brevo: SMTP & API -> API Keys (starts with "xkeysib-")
+//   EMAIL_FROM     - "Lab Name <verified-sender@example.com>" (sender must be verified in Brevo)
 
-let transporter = null;
+const BREVO_URL = 'https://api.brevo.com/v3/smtp/email';
 
-function getTransporter() {
-  if (transporter) return transporter;
+function parseAddress(value) {
+  const match = /^\s*(.*?)\s*<(.+)>\s*$/.exec(value || '');
+  if (match) return { name: match[1].replace(/^"|"$/g, '') || undefined, email: match[2].trim() };
+  return { email: (value || '').trim() };
+}
 
-  if (!process.env.SMTP_HOST) {
-    // No SMTP configured yet — fail loudly and clearly rather than silently no-op,
-    // so a missing .env value doesn't look like a successful send.
-    throw new Error('SMTP not configured — set SMTP_HOST, SMTP_USER, SMTP_PASS in .env');
-  }
-
-  transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port: Number(process.env.SMTP_PORT || 587),
-    secure: false, // STARTTLS on 587 — standard for Brevo and most SMTP relays
-    auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS,
-    },
-  });
-
-  return transporter;
+function parseList(value) {
+  return (value || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((email) => ({ email }));
 }
 
 async function sendSheetEmail({ to, cc, sheetNo, partyName, pdfBuffer }) {
-  const t = getTransporter();
+  if (!process.env.BREVO_API_KEY) {
+    throw new Error('Email not configured — set BREVO_API_KEY in the environment');
+  }
+  if (!process.env.EMAIL_FROM) {
+    throw new Error('Email not configured — set EMAIL_FROM in the environment');
+  }
 
-  await t.sendMail({
-    from: process.env.EMAIL_FROM || 'reports@example.com',
-    to,
-    cc: cc || undefined,
+  const payload = {
+    sender: parseAddress(process.env.EMAIL_FROM),
+    to: parseList(to),
     subject: `Calibration Data Sheet ${sheetNo}${partyName ? ` — ${partyName}` : ''}`,
-    text: `Attached is the calibration data sheet ${sheetNo}.`,
-    attachments: [
+    textContent: `Attached is the calibration data sheet ${sheetNo}.`,
+    attachment: [
       {
-        filename: `calibration-sheet-${sheetNo}.pdf`,
-        content: pdfBuffer,
-        contentType: 'application/pdf',
+        name: `calibration-sheet-${sheetNo}.pdf`,
+        content: pdfBuffer.toString('base64'),
       },
     ],
+  };
+
+  const ccList = parseList(cc);
+  if (ccList.length > 0) payload.cc = ccList;
+
+  const res = await fetch(BREVO_URL, {
+    method: 'POST',
+    headers: {
+      'api-key': process.env.BREVO_API_KEY,
+      'content-type': 'application/json',
+      accept: 'application/json',
+    },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(20000), // never hang the request for more than 20s
   });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.message || `Brevo API error ${res.status}`);
+  }
 }
 
 module.exports = { sendSheetEmail };
