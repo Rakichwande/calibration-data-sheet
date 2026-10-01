@@ -1,11 +1,10 @@
 import { NavLink } from 'react-router-dom';
 
+// Trimmed to just Create Sheet per request — the other pages (History,
+// Instruments, Due Dates, Settings) still exist as routes in App.jsx and
+// work fine at their URLs, they're just no longer linked from the nav.
 const links = [
   { to: '/', label: 'Create Sheet', end: true },
-  { to: '/history', label: 'Sheet History' },
-  { to: '/instruments', label: 'Instruments' },
-  { to: '/due-dates', label: 'Due Dates' },
-  { to: '/settings', label: 'Settings' },
 ];
 
 export default function Sidebar() {
